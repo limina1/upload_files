@@ -3,11 +3,17 @@ import fs from "fs";
 import path from "path";
 import { NDKPrivateKeySigner, NDKEvent } from "@nostr-dev-kit/ndk";
 import NDK from "@nostr-dev-kit/ndk";
+import Bottleneck from "bottleneck";
+const limiter = new Bottleneck({
+    minTime: 1000
+});
+
 
 interface Keys {
     npub: string;
     nsec: string;
 }
+
 interface Note {
     text: string;
     title: string;
@@ -26,72 +32,106 @@ const loadNPUB = (filename: string): Keys => {
 }
 
 const createNote = async (note: Note, pubKey: string, ndk: NDK, signer: NDKPrivateKeySigner): Promise<NDKEvent> => {
+    /*
+     * Loads note object and creates a NDKEvent
+     * @param note: Note object with text, title and metadata entries
+     * title entry in the node is the subtitle text of the specific note belonging to the article, not the title of the article
+     * Kind 30041 is a note
+     */
     let ndkEvent: NDKEvent = new NDKEvent(ndk);
     await ndk.connect().then(() => {
         ndkEvent.kind = 30041;
+        console.log(`Creating note with text ${note.text}`);
         ndkEvent.content = note.text
         ndkEvent.pubkey = getPublicKey(pubKey);
         ndkEvent.tags = [
             ['title', note.title],
         ];
-    }).catch((err: any) => { console.log(err) })
+    }).catch((err: any) => {
+        console.log(err)
+    });
     await ndkEvent.sign(signer);
     await ndk.publish(ndkEvent);
+
     return ndkEvent;
 }
 
 const createArticleHeader = async (note: Note, filename: string, pubKey: string, eventList: NDKEvent[], ndk: NDK, signer: NDKPrivateKeySigner): Promise<NDKEvent> => {
+    /*
+     * Loads note object and creates a NDKEvent
+     * @param note: Note object with text, title and metadata entries
+     * title is the title of the article
+     * Kind 30040 is an article header
+     * appends all event IDs as a list of notes that compose the article
+     */
     let ndkEvent: NDKEvent = new NDKEvent(ndk);
     const corpusID: string = filename.split('_')[0];
+    ndkEvent.tags = [];
+    for (let i = 0; i < eventList.length; i++) {
+        ndkEvent.tags.push(['e', eventList[i].id, 'wss://nostr.thesamecat.io/'])
+        console.log(`Adding ${eventList[i].id} to tags`);
+    }
+
     await ndk.connect().then(() => {
         ndkEvent.kind = 30040;
-        ndkEvent.content = `{"corpusId": "${corpusID}", "title": "${note.title}","fieldsOfStudy": ${note.fieldsOfStudy}}`;
+        ndkEvent.content = `{"corpusId": "${corpusID}", "title": "${note.title}"}`;
         ndkEvent.pubkey = getPublicKey(pubKey);
-        ndkEvent.tags = [];
-        for (let i = 0; i < eventList.length; i++) {
-            ndkEvent.tags.push(['e', eventList[i].id, 'wss://relay.damus.io'])
-        }
     }).catch((err: any) => { console.log(err) })
+    console.log(`Signing and publishing ${ndkEvent.id}`);
     await ndkEvent.sign(signer);
     await ndk.publish(ndkEvent);
     return ndkEvent;
 }
 const main = async (): Promise<void> => {
-    const jsonFolder: string[] = fs.readdirSync('./jsonFiles');
+    // Reads all files in the updatedOutput folder and creates a note for each
+    const jsonFolder: string[] = fs.readdirSync('./updatedOutput');
     const jsonFiles: string[] = jsonFolder.filter((file: string) => file.endsWith('.json'));
-    console.log(`Found ${jsonFiles.length} files`);
-
-    // user.json looks like this: {"npub": <npub>, "nsec": <nsec>}
+    // Load user keys
     const userKeys: Keys = loadNPUB('./user.json');
     const nsec: string = userKeys.nsec;
     const privateKey: nip19.DecodeResult = nip19.decode(nsec) as { type: 'nsec', data: string };
     const pubKey: string = privateKey.data;
+    // Signer for nostr allows us to sign events
+    // meaning each published event is verifiable as coming from a specific user
     const signer: NDKPrivateKeySigner = new NDKPrivateKeySigner(privateKey.data);
+
+    // Create NDK object, which allows us to connect to the nostr network
+    // and publish events
+    // explicitRelayUrls is a list of nostr relays to connect to (in this case, just indextr.com but can be more)
     const ndk: NDK = new NDK({
-        explicitRelayUrls: ['wss://relay.damus.io'],
+        explicitRelayUrls: ['wss://nostr.thesamecat.io/'],
         signer: signer
     })
     let eventList: NDKEvent[] = [];
-    // 993410 relates fo the corpusID that the article is associated with, it creates a list of all the files that have that corpusID and sorts them by according to the start_token index
-    // this is to create an ordered list of events for the article, you may need additional criteria to sort the files that you'd like to upload
-    const forward_files: string[] = jsonFiles.filter((file: string) => file.includes('10925610')).sort((a: string, b: string) => Number(a.split('.')[0]) - Number(b.split('.')[0]));
-
+    // Load all files with corpusID 119473575, which is the corpusID for the article
+    // sort them by the start token
+    const forward_files: string[] = jsonFiles.filter((file: string) => file.includes('73435008')).sort((a: string, b: string) => Number(a.split('.')[0]) - Number(b.split('.')[0]));
+    console.log(`Found ${forward_files.length} files`);
     for (let i = 0; i < forward_files.length; i++) {
         console.log(`Processing ${forward_files[i]}`);
-        const text: Note = loadJSON(`./jsonFiles/${forward_files[i]}`);
+        const text: Note = loadJSON(`./updatedOutput/${forward_files[i]}`);
+
         // JSON looks like this:
         // filename is <corpusID>_{start_token}_{end_token}.json
         // corpusID is attained from semantic scholar (see )
         // {"text": <text>, "title": <title>,
         // "subtitle": <subtitle>, "fieldsOfStudy": [<field1>, <field2>, ...]}
-        const event: Promise<NDKEvent> = createNote(text, pubKey, ndk, signer);
+
+        // Create a note for each file
+        // wrapped allows us to use a rate limiter to limit the number of requests per second as defined at the top of the file
+        // it is needed because without, we would be publishing many events per second, which can cause the relay to reject our requests
+        const wrapped: Promise<NDKEvent> = limiter.schedule(createNote, text, pubKey, ndk, signer);
+        const event: NDKEvent = await wrapped;
         eventList.push(await event);
         console.log(`List is now ${eventList.length} long`);
     }
-    const header: Promise<NDKEvent> = createArticleHeader(loadJSON(`./jsonFiles/${forward_files[0]}`), forward_files[0], pubKey, eventList, ndk, signer);
+
+    // Create an article header for the article
+    // this event contains the metadata for the article, including the title and the list of notes that compose the article
+    const wrapped2: Promise<NDKEvent> = limiter.schedule(createArticleHeader, loadJSON(`./updatedOutput/${forward_files[0]}`), forward_files[0], pubKey, eventList, ndk, signer);
+    const header: NDKEvent = await wrapped2;
     await header;
-    // }
-    // ndk.removeAllListeners();
-    // await header;
 }
-main();
+
+const wrappedMain: Promise<void> = limiter.schedule(main);
+// await wrappedMain;

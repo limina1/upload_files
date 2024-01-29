@@ -70,6 +70,7 @@ const createArticleHeader = async (note: Note, filename: string, pubKey: string,
     const corpusID: string = filename.split('_')[0];
     ndkEvent.tags = [];
     for (let i = 0; i < eventList.length; i++) {
+
         ndkEvent.tags.push(['e', eventList[i].id, relayUrls[0]])
         console.log(`Adding ${eventList[i].id} to tags`);
     }

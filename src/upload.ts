@@ -23,6 +23,7 @@ interface Note {
 
 const relayUrls: string[] = ['wss://nostr.thesamecat.io/'];
 const folder: string = './notes';
+const articleName: string = 'Support Vector Machine';
 const loadJSON = (filename: string): Note => {
     const rawdata: string = fs.readFileSync(path.join(filename), 'utf8')
     return JSON.parse(rawdata);
@@ -112,7 +113,6 @@ const main = async (): Promise<void> => {
     // const articlenames: string[] = jsonFiles.map((file: string) => file.split('_')[0]).filter((value: string, index: number, self: string[]) => self.indexOf(value) === index);
     // print out list of article names
     // articlenames.forEach((name: string) => console.log(name));
-    const articleName: string = 'Support Vector Machine';
 
     const forward_files: string[] = jsonFiles.filter((file: string) => file.includes(articleName)).sort((a: string, b: string) => Number(a.split('.')[0]) - Number(b.split('.')[0]));
     // ix = 20;

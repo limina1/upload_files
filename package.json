@@ -1,0 +1,27 @@
+{
+  "name": "indextr",
+  "version": "1.0.0",
+  "description": "",
+  "type": "module",
+  "exports": "src/public.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "upload": "npx esrun src/upload.ts",
+    "delete": "npx esrun src/delete.ts",
+    "read": "npx esrun src/read.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.4.5",
+    "ts-node": "^10.9.1"
+  },
+  "dependencies": {
+    "@digitak/esrun": "^3.2.24",
+    "@nostr-dev-kit/ndk": "^0.6.0",
+    "bottleneck": "^2.19.5",
+    "nostr-tools": "^1.14.0",
+    "websocket-polyfill": "^0.0.3"
+  }
+}
